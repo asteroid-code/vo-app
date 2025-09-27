@@ -1,0 +1,17 @@
+# Para hacer llamadas a APIs de forma asíncrona y eficiente
+httpx
+
+# Para validación de datos y configuraciones claras
+pydantic
+
+# Cliente oficial de Python para interactuar con Supabase
+supabase
+
+# Para leer las claves secretas desde el archivo .env
+python-dotenv
+
+# Librerías estándar para scraping
+requests
+beautifulsoup4
+feedparser
+fake-useragent
