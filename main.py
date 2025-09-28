@@ -9,19 +9,18 @@ from ai_orchestrator.consensus_engine import AIOrchestrator, OrchestratorConfig,
 # Configuración básica de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- BIBLIOTECA DE CONTENIDO CENTRALIZADA ---
+# --- BIBLIOTECA DE CONTENIDO ---
 CONTENT_SOURCES: List[Dict[str, str]] = [
     {"type": "rss", "category": "noticias_ia", "name": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
     {"type": "rss", "category": "reviews_tech", "name": "The Verge", "url": "https://www.theverge.com/rss/index.xml"},
-    # Limitamos a 2 fuentes para una prueba más rápida y barata
 ]
 
 async def main_workflow():
     """
     El flujo de trabajo principal y final que orquesta el scraping,
-    guardado y enriquecimiento por IA.
+    guardado y enriquecimiento por IA para múltiples idiomas.
     """
-    logging.info("--- INICIANDO EL WORKER DE vo.app (vFinal: CON IA INTEGRADA) ---")
+    logging.info("--- INICIANDO EL WORKER DE vo.app (vFinal: IA Multilingüe) ---")
 
     try:
         # 1. Inicializar todos nuestros clientes
@@ -33,13 +32,10 @@ async def main_workflow():
         logging.info(f"Se procesarán {len(CONTENT_SOURCES)} fuentes de contenido.")
 
         for source_info in CONTENT_SOURCES:
-            source_name = source_info["name"]
-            feed_url = source_info["url"]
-
+            source_name, feed_url = source_info["name"], source_info["url"]
             logging.info(f"\n--- Procesando fuente: {source_name} ---")
 
             feed_data = scraper.fetch_rss_feed(feed_url)
-
             if not feed_data or not feed_data.entries:
                 logging.warning(f"No se encontraron artículos en {source_name}. Saltando.")
                 continue
@@ -61,21 +57,29 @@ async def main_workflow():
                         # 3. SI Y SOLO SI el artículo es nuevo, lo procesamos con la IA
                         if is_new:
                             logging.info(f"Artículo nuevo: '{article.title}'. Obteniendo contenido completo para la IA...")
-
-                            # Obtener el contenido completo
                             full_content = scraper.fetch_article_content(str(article.url))
 
                             if full_content:
-                                # 4. Crear un prompt y llamar al orquestador
-                                prompt_para_ia = f"Resume el siguiente artículo en 3 puntos clave y extrae los nombres de hasta 2 productos o empresas mencionados. Artículo: '{full_content[:4000]}'"
+                                # 4. Crear un prompt MULTILINGÜE y llamar al orquestador
+                                prompt_para_ia = f"""
+                                Actúa como un analista de tecnología experto. Analiza el siguiente artículo y proporciona dos cosas en formato JSON:
+                                1. Un resumen conciso en INGLÉS (english_summary).
+                                2. El mismo resumen, traducido con alta calidad al ESPAÑOL (spanish_summary).
+
+                                Artículo: '{full_content[:4000]}'
+                                """
 
                                 logging.info("Llamando al orquestador de IA... (Esto puede tardar)")
-                                ai_consensus_content = await ai_orchestrator.get_consensus(prompt_para_ia)
+                                ai_response = await ai_orchestrator.get_consensus(prompt_para_ia)
 
-                                if ai_consensus_content:
+                                if ai_response:
+                                    # FUTURO: Aquí parsearíamos el JSON de la respuesta de la IA
+                                    # Por ahora, usamos la respuesta completa como contenido.
+
                                     # 5. Actualizar el artículo en Supabase con el contenido enriquecido
                                     update_data = {
-                                        "content": ai_consensus_content,
+                                        "content": ai_response, # Contenido principal en inglés
+                                        "content_es": ai_response, # Contenido en español (mejora futura: parsear JSON)
                                         "processed_by_ai": True
                                     }
                                     supabase_client.update_article(str(article.url), update_data)
