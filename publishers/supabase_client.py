@@ -1,9 +1,10 @@
 import os
 import asyncio
 from dotenv import load_dotenv
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, ValidationError
 from supabase import create_client, Client
 import logging
+from typing import Optional, List, Dict, Any
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -12,11 +13,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 load_dotenv()
 
 class Article(BaseModel):
-    """Modelo de datos para un artículo, validado por Pydantic."""
+    """
+    Modelo de datos para un artículo, ahora con campos opcionales para enriquecimiento.
+    """
     title: str
     url: HttpUrl
-    content: str
+    content: Optional[str] = None
     source: str
+    # Nuevos campos opcionales. Pueden ser nulos.
+    image_url: Optional[HttpUrl] = None
+    related_products: Optional[List[Dict[str, Any]]] = None
 
 class SupabaseClient:
     """Cliente para interactuar con la base de datos Supabase de forma segura."""
@@ -26,72 +32,94 @@ class SupabaseClient:
         supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
 
         if not supabase_url or not supabase_key:
-            raise ValueError("Faltan las credenciales de Supabase (URL y SERVICE_KEY) en la configuración.")
+            raise ValueError("Faltan las credenciales de Supabase en la configuración.")
 
         self.client: Client = create_client(supabase_url, supabase_key)
-        logging.info("Cliente de Supabase inicializado con éxito.")
+        logging.info("Cliente de Supabase (v2: Enriched) inicializado con éxito.")
 
-    def save_article(self, article: Article) -> None:
+    def save_article(self, article: Article) -> bool:
         """
-        Guarda un artículo en la tabla 'articles' de Supabase, evitando duplicados.
+        Guarda un artículo en la tabla 'articles', evitando duplicados.
+        Ahora devuelve True si el artículo es nuevo, False si ya existía.
         """
-        # --- SOLUCIÓN FINAL ---
-        # 1. Usar model_dump() como recomienda la nueva versión de Pydantic.
-        # 2. Convertir explícitamente la URL a un string simple ANTES de cualquier operación.
-        article_data = article.model_dump()
-        article_data['url'] = str(article_data['url'])
-
         try:
-            # Verificar si el artículo ya existe usando la URL de texto simple
+            # Pydantic v2 usa model_dump() y lo pasamos a JSON para asegurar compatibilidad
+            article_data = article.model_dump(mode='json')
+
+            # Verificar si el artículo ya existe
             response = self.client.table("articles").select("url").eq("url", article_data['url']).execute()
 
             if response.data:
                 logging.info(f"El artículo con URL '{article_data['url']}' ya existe. Se omitirá.")
-                return
+                return False
 
-            # Si no existe, insertar el diccionario con la URL ya convertida a texto
+            # Si no existe, insertar
             logging.info(f"Insertando nuevo artículo: '{article_data['title']}'")
             insert_response = self.client.table("articles").insert(article_data).execute()
 
-            if len(insert_response.data) > 0:
-                logging.info("¡ÉXITO! Artículo insertado correctamente en Supabase.")
+            if insert_response.data:
+                logging.info("¡ÉXITO! Artículo nuevo insertado correctamente.")
+                return True
             else:
-                logging.error(f"La inserción del artículo falló. Respuesta de Supabase: {insert_response}")
+                logging.error(f"La inserción del artículo falló. Respuesta: {insert_response}")
+                return False
 
         except Exception as e:
-            logging.error(f"Error inesperado al interactuar con Supabase: {e}")
+            logging.error(f"Error inesperado al guardar el artículo: {e}")
+            return False
 
+    def update_article(self, url: str, update_data: Dict[str, Any]) -> None:
+        """
+        Actualiza un artículo existente en la base de datos usando su URL.
+        """
+        logging.info(f"Intentando actualizar el artículo con URL: {url}")
+        try:
+            response = self.client.table("articles").update(update_data).eq("url", url).execute()
+            if response.data:
+                logging.info(f"¡ÉXITO! Artículo actualizado correctamente.")
+            else:
+                logging.warning(f"No se encontró o no se pudo actualizar el artículo con URL {url}. Respuesta: {response}")
+        except Exception as e:
+            logging.error(f"Error inesperado al actualizar el artículo: {e}")
 
 # --- Ejemplo de Uso ---
 if __name__ == "__main__":
-    async def main():
-        logging.info("Iniciando DEMO FINAL del SupabaseClient...")
+    def run_demo():
+        logging.info("Iniciando DEMO del SupabaseClient (v2: Enriched)...")
 
         try:
             supabase_client = SupabaseClient()
 
-            # --- URLs CORREGIDAS ---
-            article1 = Article(
-                title="Nuevo Avance en IA Cuántica",
-                url="https://example.com/ia-cuantica-1",
-                content="El contenido del artículo sobre IA cuántica...",
-                source="TechCrunch"
-            )
-            article2 = Article(
-                title="El Futuro de los Vehículos Autónomos",
-                url="https://example.com/vehiculos-autonomos-futuro",
-                content="Un análisis profundo sobre los coches que se conducen solos...",
-                source="Wired"
+            # 1. Crear un artículo base, como lo haría el scraper
+            base_article = Article(
+                title="Review del Nuevo Portátil XYZ",
+                url="https://example.com/review-portatil-xyz",
+                content="Este es el resumen inicial del artículo...",
+                source="The Verge"
             )
 
-            logging.info(f"\n--- Intentando guardar Artículo 1: '{article1.title}' ---")
-            supabase_client.save_article(article1)
+            logging.info(f"\n--- Paso 1: Intentando guardar el artículo base ---")
+            is_new = supabase_client.save_article(base_article)
 
-            logging.info(f"\n--- Intentando guardar Artículo 2: '{article2.title}' ---")
-            supabase_client.save_article(article2)
+            # 2. Simular el enriquecimiento por la IA (solo si es nuevo)
+            if is_new:
+                logging.info(f"\n--- Paso 2: El artículo es nuevo. Simulando enriquecimiento por IA... ---")
 
-            logging.info(f"\n--- Intentando guardar Artículo 1 de nuevo (prueba de duplicados) ---")
-            supabase_client.save_article(article1)
+                # Datos que nuestra IA habría generado
+                enriched_data = {
+                    "content": "Este es el contenido COMPLETO y ENRIQUECIDO por 8 IAs...",
+                    "image_url": "https://images.unsplash.com/photo-1517336714731-489689fd1ca8",
+                    "related_products": [
+                        {"type": "product_amazon", "name": "Portátil XYZ", "affiliate_link": "https://amazon.com/..."}
+                    ],
+                    "processed_by_ai": True
+                }
+
+                supabase_client.update_article(str(base_article.url), enriched_data)
+
+            # 3. Intentar guardar el mismo artículo de nuevo para probar duplicados
+            logging.info(f"\n--- Paso 3: Intentando guardar el artículo base de nuevo (prueba de duplicados) ---")
+            supabase_client.save_article(base_article)
 
         except ValueError as e:
             logging.critical(e)
@@ -100,4 +128,4 @@ if __name__ == "__main__":
 
         logging.info("\n--- Demostración finalizada ---")
 
-    asyncio.run(main())
+    run_demo()

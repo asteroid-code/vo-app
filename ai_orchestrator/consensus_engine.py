@@ -322,27 +322,16 @@ class AIOrchestrator:
         """Retorna el estado actual de todos los Circuit Breakers."""
         return {name: cb.get_status() for name, cb in self.circuit_breakers.items()}
 
-# --- Ejemplo de Configuración ---
-# En un entorno real, esto podría cargarse desde un archivo JSON o una base de datos.
-# Los pesos se pueden ajustar para dar más importancia a ciertas IAs.
-# Tier 1 (Velocidad) - pesos más bajos
-# Tier 2 (Especialización) - pesos medios
-# Tier 3 (Calidad) - pesos más altos
+# --- Ejemplo de Configuración SIMPLIFICADO PARA PRUEBAS ---
 EXAMPLE_CONFIG_DICT = {
     "ai_services": [
         {"name": "Groq", "url": "https://api.groq.com/v1/chat/completions", "api_key_env": "GROQ_API_KEY", "weight": 1.0, "tier": 1},
-        {"name": "xAI Grok", "url": "https://api.xai.com/grok/v1/chat/completions", "api_key_env": "XAI_GROK_API_KEY", "weight": 1.0, "tier": 1},
-        {"name": "Gemini", "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent", "api_key_env": "GEMINI_API_KEY", "weight": 1.2, "tier": 1},
-        {"name": "HuggingFace", "url": "https://api-inference.huggingface.co/models/...", "api_key_env": "HF_API_KEY", "weight": 1.5, "tier": 2},
-        {"name": "Cohere", "url": "https://api.cohere.ai/v1/chat", "api_key_env": "COHERE_API_KEY", "weight": 1.5, "tier": 2},
-        {"name": "Perplexity", "url": "https://api.perplexity.ai/chat/completions", "api_key_env": "PERPLEXITY_API_KEY", "weight": 1.8, "tier": 2},
         {"name": "OpenAI", "url": "https://api.openai.com/v1/chat/completions", "api_key_env": "OPENAI_API_KEY", "weight": 2.0, "tier": 3},
-        {"name": "Claude", "url": "https://api.anthropic.com/v1/messages", "api_key_env": "CLAUDE_API_KEY", "weight": 2.0, "tier": 3},
     ],
-    "timeout_per_ai": 15, # Reducido para pruebas más rápidas
-    "circuit_breaker_failure_threshold": 2, # Reducido para pruebas más rápidas
-    "circuit_breaker_recovery_timeout": 10, # Reducido para pruebas más rápidas
-    "circuit_breaker_reset_timeout": 30
+    "timeout_per_ai": 30,
+    "circuit_breaker_failure_threshold": 2,
+    "circuit_breaker_recovery_timeout": 60,
+    "circuit_breaker_reset_timeout": 300
 }
 
 # --- Ejemplo de Uso ---
