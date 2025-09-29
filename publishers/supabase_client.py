@@ -27,6 +27,9 @@ class Article(BaseModel):
     image_url: Optional[HttpUrl] = None
     related_products: Optional[List[Dict[str, Any]]] = None
     processed_by_ai: bool = Field(default=False)
+    generation_time: Optional[float] = None # Tiempo en segundos
+    quality_score: Optional[float] = None # Puntuación de calidad (0.0 a 1.0)
+    ai_provider: Optional[str] = None # Nombre del proveedor de IA que generó el contenido
 
 class SupabaseClient:
     """Cliente final para interactuar con la base de datos Supabase."""
@@ -134,7 +137,14 @@ class SupabaseClient:
         if not articles:
             return []
 
-        articles_data = [article.model_dump(mode='json') for article in articles]
+        articles_data = []
+        for article in articles:
+            data = article.model_dump(mode='json')
+            # Explicitly remove fields that might not exist in the DB table
+            data.pop('generation_time', None)
+            data.pop('quality_score', None)
+            data.pop('ai_provider', None)
+            articles_data.append(data)
 
         try:
             logging.info(f"Intentando insertar {len(articles_data)} artículos por lotes.")
@@ -152,6 +162,19 @@ class SupabaseClient:
                 return []
         except Exception as e:
             logging.error(f"Error inesperado al guardar artículos por lotes: {e}")
+            return []
+
+    def get_all_articles(self) -> List[Article]:
+        """
+        Obtiene todos los artículos de la base de datos.
+        """
+        try:
+            response = self.client.table("articles").select("*").execute()
+            articles = [Article(**item) for item in response.data]
+            logging.info(f"Se recuperaron {len(articles)} artículos de la base de datos.")
+            return articles
+        except Exception as e:
+            logging.error(f"Error al obtener todos los artículos de Supabase: {e}")
             return []
 
 # --- Ejemplo de Uso ---

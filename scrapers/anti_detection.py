@@ -28,7 +28,7 @@ class AntiDetectionScraper:
         logging.info(f"Aplicando retraso aleatorio de {delay:.2f} segundos...")
         time.sleep(delay)
 
-    def fetch_rss_feed(self, rss_url: str) -> Optional[Dict[str, Any]]:
+    def fetch_rss_feed(self, rss_url: str, headers: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
         logging.info(f"Intentando descargar y parsear feed RSS de: {rss_url}")
 
         retries = 0
@@ -38,7 +38,7 @@ class AntiDetectionScraper:
         while retries <= max_retries:
             self._apply_random_delay()
             try:
-                response = self.scraper.get(rss_url, timeout=SCRAPER_CONFIG["timeout_seconds"])
+                response = self.scraper.get(rss_url, headers=headers, timeout=SCRAPER_CONFIG["timeout_seconds"])
                 response.raise_for_status()
 
                 logging.info("Petición a través de CloudScraper exitosa. Procediendo a parsear el contenido descomprimido...")

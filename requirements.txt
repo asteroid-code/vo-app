@@ -17,3 +17,7 @@ feedparser
 fake-useragent
 cloudscraper
 pytrends
+google-api-python-client
+youtube-transcript-api
+aiohttp
+asyncio
