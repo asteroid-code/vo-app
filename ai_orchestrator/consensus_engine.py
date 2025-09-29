@@ -234,10 +234,14 @@ class AIOrchestrator:
             )
             api_key = os.getenv(ai_config.api_key_env)
             if not api_key:
-                logging.error(f"API Key para {ai_config.name} ({ai_config.api_key_env}) no encontrada en .env")
+                logging.error(f"API Key para {ai_config.name} ({ai_config.api_key_env}) no encontrada en .env. Por favor, verifica tu archivo .env.")
                 # Considerar abrir el circuit breaker si la clave no está presente
                 self.circuit_breakers[ai_config.name].on_failure()
             self.ai_api_keys[ai_config.name] = api_key or "DUMMY_KEY" # Usar dummy para pruebas si no existe
+
+            # Advertencia específica para Gemini si la clave no está presente
+            if ai_config.name == "Gemini" and not api_key:
+                logging.warning(f"La API Key de Gemini es crítica para su URL. Asegúrate de que '{ai_config.api_key_env}' esté configurada correctamente en .env.")
 
         self.consensus_engine = ConsensusEngine(config.ai_services)
         logging.info("AIOrchestrator inicializado.")
@@ -274,49 +278,86 @@ class AIOrchestrator:
             # Note: Rate limit issues (429) for OpenAI are handled by the Circuit Breaker.
             # Ensure your API keys are valid and usage adheres to provider limits.
 
-            if ai_config.name == "Groq" or ai_config.name == "OpenAI":
-                json_data = {
-                    "model": "llama3-8b-8192" if ai_config.name == "Groq" else "gpt-3.5-turbo",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.7,
-                }
-                response = await self.client.post(ai_config.url, headers=headers, json=json_data)
-                response.raise_for_status()
-                response_json = response.json()
-                response_content = response_json["choices"][0]["message"]["content"]
+            # Note: Rate limit issues (429) for OpenAI are handled by the Circuit Breaker.
+            # Ensure your API keys are valid and usage adheres to provider limits.
 
-            elif ai_config.name == "DeepSeek":
-                headers["HTTP-Referer"] = "https://axiom-ai-gamma.vercel.app"
-                headers["X-Title"] = "Axiom AI - Multi-Engine Content Platform"
-                json_data = {
-                    "model": ai_config.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.7,
-                }
-                response = await self.client.post(ai_config.url, headers=headers, json=json_data)
-                response.raise_for_status()
-                response_json = response.json()
-                response_content = response_json["choices"][0]["message"]["content"]
+            retries = 0
+            max_retries = 2
+            initial_delay = 1 # seconds
 
-            elif ai_config.name == "Gemini":
-                # Gemini usa un formato diferente para la clave API y no requiere "Content-Type" en el header
-                headers = {"x-goog-api-key": self.ai_api_keys[ai_config.name]}
-                json_data = {
-                    "contents": [{"parts": [{"text": prompt}]}]
-                }
-                response = await self.client.post(ai_config.url, headers=headers, json=json_data)
-                response.raise_for_status()
-                response_json = response.json()
-                response_content = response_json["candidates"][0]["content"]["parts"][0]["text"]
+            while retries <= max_retries:
+                try:
+                    if ai_config.name == "Groq" or ai_config.name == "OpenAI":
+                        # Para Groq, el modelo debe ser especificado y la API key debe ser válida.
+                        # El error 400 de Groq puede indicar una API key mal formada o inválida.
+                        # Se asume que la validación de la API key se hace al inicio.
+                        json_data = {
+                            "model": "llama3-8b-8192" if ai_config.name == "Groq" else "gpt-3.5-turbo",
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.7,
+                        }
+                        response = await self.client.post(ai_config.url, headers=headers, json=json_data)
+                        response.raise_for_status()
+                        response_json = response.json()
+                        response_content = response_json["choices"][0]["message"]["content"]
 
-            elif ai_config.name == "HuggingFace":
-                headers = {"Authorization": f"Bearer {self.ai_api_keys[ai_config.name]}"}
-                json_data = {"inputs": prompt}
-                response = await self.client.post(ai_config.url, headers=headers, json=json_data)
-                response.raise_for_status()
-                response_json = response.json()
-                # La respuesta de HuggingFace Inference API puede variar, ajusta según el modelo
-                response_content = response_json[0]["generated_text"] if isinstance(response_json, list) else response_json["generated_text"]
+                    elif ai_config.name == "DeepSeek":
+                        headers["HTTP-Referer"] = "https://axiom-ai-gamma.vercel.app"
+                        headers["X-Title"] = "Axiom AI - Multi-Engine Content Platform"
+                        json_data = {
+                            "model": ai_config.model,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.7,
+                        }
+                        response = await self.client.post(ai_config.url, headers=headers, json=json_data)
+                        response.raise_for_status()
+                        response_json = response.json()
+                        response_content = response_json["choices"][0]["message"]["content"]
+
+                    elif ai_config.name == "Gemini":
+                        # Gemini usa la clave API como parámetro de consulta en la URL
+                        # No se necesitan headers de autorización ni Content-Type para la clave API en la URL.
+                        gemini_url = f"{ai_config.url}?key={self.ai_api_keys[ai_config.name]}"
+                        json_data = {
+                            "contents": [{"parts": [{"text": prompt}]}]
+                        }
+                        response = await self.client.post(gemini_url, json=json_data)
+                        response.raise_for_status()
+                        response_json = response.json()
+                        response_content = response_json["candidates"][0]["content"]["parts"][0]["text"]
+
+                    elif ai_config.name == "HuggingFace":
+                        # HuggingFace Inference API requiere la clave en el header Authorization
+                        headers = {"Authorization": f"Bearer {self.ai_api_keys[ai_config.name]}"}
+                        json_data = {"inputs": prompt}
+                        response = await self.client.post(ai_config.url, headers=headers, json=json_data)
+                        response.raise_for_status()
+                        response_json = response.json()
+                        # La respuesta de HuggingFace Inference API puede variar, ajusta según el modelo
+                        response_content = response_json[0]["generated_text"] if isinstance(response_json, list) else response_json["generated_text"]
+
+                    # Si llegamos aquí, la petición fue exitosa, salir del bucle de reintentos
+                    break
+
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 429 and ai_config.name == "OpenAI":
+                        logging.warning(f"OpenAI Rate limit excedido para '{ai_config.name}' (intento {retries + 1}/{max_retries + 1}).")
+                        retries += 1
+                        if retries <= max_retries:
+                            delay = initial_delay * (2 ** (retries - 1))
+                            logging.info(f"Reintentando OpenAI en {delay} segundos...")
+                            await asyncio.sleep(delay)
+                        else:
+                            raise # Re-lanzar si se exceden los reintentos
+                    else:
+                        raise # Re-lanzar otros errores HTTP de estado
+
+            if response_content:
+                cb.on_success()
+                logging.info(f"'{ai_config.name}' respondió con éxito.")
+                return response_content
+            else:
+                raise ValueError(f"No se pudo extraer contenido de la respuesta de '{ai_config.name}'.")
 
             if response_content:
                 cb.on_success()
@@ -398,7 +439,7 @@ REAL_CONFIG_DICT = {
 
         # TIER 2: Specialized
         {"name": "Gemini", "url": "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent", "api_key_env": "GEMINI_API_KEY", "weight": 1.4, "tier": 2},
-        {"name": "HuggingFace", "url": "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium", "api_key_env": "HUGGINGFACE_API_KEY", "weight": 1.1, "tier": 2},
+        {"name": "HuggingFace", "url": "https://api-inference.huggingface.co/models/microsoft/DialoGPT-large", "api_key_env": "HUGGINGFACE_API_KEY", "weight": 1.1, "tier": 2}, # Cambiado a DialoGPT-large
 
         # TIER 3: Premium
         {"name": "OpenAI", "url": "https://api.openai.com/v1/chat/completions", "api_key_env": "OPENAI_API_KEY", "weight": 1.5, "tier": 3},

@@ -3,6 +3,8 @@ venv/
 
 # Ignorar el archivo que contiene nuestras claves secretas
 .env
+.env.local
+.env.production
 
 # Ignorar cachés y archivos generados por Python
 __pycache__/
