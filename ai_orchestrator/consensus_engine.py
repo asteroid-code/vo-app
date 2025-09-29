@@ -250,33 +250,36 @@ class AIOrchestrator:
             json_data = {}
             response_content = None
 
-            if ai_config.name == "Groq" or ai_config.name == "OpenAI" or ai_config.name == "DeepSeek":
-                if ai_config.name == "DeepSeek":
-                    headers["HTTP-Referer"] = "https://your-app-url.com" # Reemplazar con la URL de tu aplicación
-                    headers["X-Title"] = "Your App Name" # Reemplazar con el nombre de tu aplicación
-                    json_data = {
-                        "model": ai_config.model, # Asumiendo que el modelo está en ai_config para DeepSeek
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.7,
-                    }
-                else: # Groq y OpenAI
-                    json_data = {
-                        "model": "llama3-8b-8192" if ai_config.name == "Groq" else "gpt-3.5-turbo",
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.7,
-                    }
+            # Note: Rate limit issues (429) for OpenAI are handled by the Circuit Breaker.
+            # Ensure your API keys are valid and usage adheres to provider limits.
 
+            if ai_config.name == "Groq" or ai_config.name == "OpenAI":
+                json_data = {
+                    "model": "llama3-8b-8192" if ai_config.name == "Groq" else "gpt-3.5-turbo",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                }
                 response = await self.client.post(ai_config.url, headers=headers, json=json_data)
                 response.raise_for_status()
                 response_json = response.json()
-                if ai_config.name == "Gemini":
-                    response_content = response_json["candidates"][0]["content"]["parts"][0]["text"]
-                else:
-                    response_content = response_json["choices"][0]["message"]["content"]
+                response_content = response_json["choices"][0]["message"]["content"]
+
+            elif ai_config.name == "DeepSeek":
+                headers["HTTP-Referer"] = "https://your-app-url.com" # Reemplazar con la URL de tu aplicación
+                headers["X-Title"] = "Your App Name" # Reemplazar con el nombre de tu aplicación
+                json_data = {
+                    "model": ai_config.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                }
+                response = await self.client.post(ai_config.url, headers=headers, json=json_data)
+                response.raise_for_status()
+                response_json = response.json()
+                response_content = response_json["choices"][0]["message"]["content"]
 
             elif ai_config.name == "Gemini":
-                headers.pop("Content-Type") # Gemini usa un formato diferente para la clave API
-                headers["x-goog-api-key"] = self.ai_api_keys[ai_config.name]
+                # Gemini usa un formato diferente para la clave API y no requiere "Content-Type" en el header
+                headers = {"x-goog-api-key": self.ai_api_keys[ai_config.name]}
                 json_data = {
                     "contents": [{"parts": [{"text": prompt}]}]
                 }
@@ -286,7 +289,7 @@ class AIOrchestrator:
                 response_content = response_json["candidates"][0]["content"]["parts"][0]["text"]
 
             elif ai_config.name == "HuggingFace":
-                headers["Authorization"] = f"Bearer {self.ai_api_keys[ai_config.name]}"
+                headers = {"Authorization": f"Bearer {self.ai_api_keys[ai_config.name]}"}
                 json_data = {"inputs": prompt}
                 response = await self.client.post(ai_config.url, headers=headers, json=json_data)
                 response.raise_for_status()
@@ -374,7 +377,7 @@ REAL_CONFIG_DICT = {
 
         # TIER 2: Specialized
         {"name": "Gemini", "url": "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent", "api_key_env": "GEMINI_API_KEY", "weight": 1.4, "tier": 2},
-        {"name": "HuggingFace", "url": "https://api-inference.huggingface.co/models/microsoft/DialoGPT-large", "api_key_env": "HUGGINGFACE_API_KEY", "weight": 1.1, "tier": 2},
+        {"name": "HuggingFace", "url": "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium", "api_key_env": "HUGGINGFACE_API_KEY", "weight": 1.1, "tier": 2},
 
         # TIER 3: Premium
         {"name": "OpenAI", "url": "https://api.openai.com/v1/chat/completions", "api_key_env": "OPENAI_API_KEY", "weight": 1.5, "tier": 3},
