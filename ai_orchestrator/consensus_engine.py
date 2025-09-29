@@ -150,42 +150,63 @@ class ConsensusEngine:
         self.ai_weights = {config.name: config.weight for config in ai_configs}
         logging.info("Consensus Engine inicializado con pesos de IA.")
 
+    def _calculate_response_score(self, response_content: str, ai_name: str) -> float:
+        """
+        Calcula un score para una respuesta basada en su longitud, calidad (número de oraciones)
+        y el peso configurado de la IA.
+        """
+        if not isinstance(response_content, str) or not response_content.strip():
+            return 0.0
+
+        # Score basado en longitud: más largo es generalmente mejor, hasta cierto punto
+        length_score = len(response_content) / 100.0 # Normalizar por una base
+
+        # Score basado en calidad (número de oraciones): usar puntuación para estimar
+        sentence_count = response_content.count('.') + response_content.count('!') + response_content.count('?')
+        quality_score = sentence_count * 0.5 # Cada oración contribuye a la calidad
+
+        # Aplicar el peso de la IA
+        ai_weight = self.ai_weights.get(ai_name, 1.0)
+
+        # Combinar scores y aplicar peso
+        total_score = (length_score + quality_score) * ai_weight
+        return total_score
+
     def get_consensus(self, responses: List[Tuple[str, Any]]) -> Optional[str]:
         """
-        Combina las respuestas de las IAs utilizando un algoritmo de votación ponderada.
+        Selecciona la "mejor" respuesta de las IAs utilizando un algoritmo de scoring ponderado.
 
         Args:
             responses (List[Tuple[str, Any]]): Lista de tuplas (nombre_ia, respuesta_ia).
-                                                Las respuestas pueden ser de cualquier tipo,
-                                                pero se espera que sean strings para el consenso.
+                                                Las respuestas deben ser strings para ser evaluadas.
 
         Returns:
-            Optional[str]: El resultado del consenso como string, o None si no hay respuestas válidas.
+            Optional[str]: La respuesta con el score más alto, o None si no hay respuestas válidas.
         """
         if not responses:
             logging.warning("No hay respuestas para generar consenso.")
             return None
 
-        # Para simplificar, asumimos que las respuestas son strings y las concatenamos
-        # En un caso real, se necesitaría una lógica más sofisticada (ej. sumar scores,
-        # votar por la mejor respuesta, resumir, etc.)
+        scored_responses: List[Tuple[float, str]] = []
 
-        weighted_responses = []
         for ai_name, response_content in responses:
-            weight = self.ai_weights.get(ai_name, 1.0) # Usar peso configurado, default 1.0
             if isinstance(response_content, str):
-                weighted_responses.extend([response_content] * int(weight * 10)) # Multiplicar por 10 para tener más "votos"
+                score = self._calculate_response_score(response_content, ai_name)
+                if score > 0: # Solo considerar respuestas con score positivo
+                    scored_responses.append((score, response_content))
+                    logging.debug(f"Respuesta de '{ai_name}' obtuvo score: {score:.2f}")
             else:
-                logging.warning(f"Respuesta de '{ai_name}' no es string, no se incluye en el consenso simple.")
+                logging.warning(f"Respuesta de '{ai_name}' no es string, no se incluye en la evaluación de consenso.")
 
-        if not weighted_responses:
-            logging.warning("No hay respuestas válidas para el consenso ponderado.")
+        if not scored_responses:
+            logging.warning("No hay respuestas válidas con score positivo para el consenso.")
             return None
 
-        # Un enfoque simple: unir las respuestas ponderadas
-        final_consensus = " ".join(weighted_responses)
-        logging.info(f"Consenso generado a partir de {len(responses)} respuestas.")
-        return final_consensus.strip()
+        # Seleccionar la respuesta con el score más alto
+        best_response_score, best_response_content = max(scored_responses, key=lambda item: item[0])
+
+        logging.info(f"Consenso generado: seleccionada la mejor respuesta con score: {best_response_score:.2f}.")
+        return best_response_content.strip()
 
 class AIOrchestrator:
     """

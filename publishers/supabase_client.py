@@ -39,6 +39,7 @@ class SupabaseClient:
             raise ValueError("Faltan las credenciales de Supabase en la configuración.")
 
         self.client: Client = create_client(supabase_url, supabase_key)
+        self._url_cache: set[str] = set() # Cache en memoria para URLs recientes
         logging.info("Cliente de Supabase (vFinal: Enriched) inicializado con éxito.")
 
     def save_article(self, article: Article) -> bool:
@@ -46,21 +47,32 @@ class SupabaseClient:
         Guarda un artículo base en Supabase, evitando duplicados.
         Devuelve True si el artículo es nuevo, False si ya existía.
         """
+        article_url_str = str(article.url)
+
+        # 1. Verificar en el cache en memoria primero
+        if article_url_str in self._url_cache:
+            logging.info(f"El artículo con URL '{article_url_str}' ya existe en cache. Se omitirá.")
+            return False
+
         try:
             # Pydantic v2 usa model_dump() y lo pasamos a JSON para asegurar compatibilidad con tipos complejos
             article_data = article.model_dump(mode='json')
 
+            # 2. Verificar en la base de datos
             response = self.client.table("articles").select("url").eq("url", article_data['url']).execute()
 
             if response.data:
-                logging.info(f"El artículo con URL '{article_data['url']}' ya existe. Se omitirá.")
+                logging.info(f"El artículo con URL '{article_url_str}' ya existe en DB. Se omitirá.")
+                self._url_cache.add(article_url_str) # Añadir al cache si se encuentra en DB
                 return False
 
+            # 3. Insertar nuevo artículo
             logging.info(f"Insertando nuevo artículo: '{article_data['title']}'")
             insert_response = self.client.table("articles").insert(article_data).execute()
 
             if insert_response.data:
                 logging.info("¡ÉXITO! Artículo nuevo insertado correctamente.")
+                self._url_cache.add(article_url_str) # Añadir al cache si la inserción es exitosa
                 return True
             else:
                 logging.error(f"La inserción del artículo falló. Respuesta: {insert_response}")
@@ -84,6 +96,63 @@ class SupabaseClient:
                 logging.warning(f"No se encontró o no se pudo actualizar el artículo con URL {url}.")
         except Exception as e:
             logging.error(f"Error inesperado al actualizar el artículo: {e}")
+
+    def check_existing_articles_batch(self, urls: List[str]) -> set[str]:
+        """
+        Verifica la existencia de múltiples URLs en la base de datos en una sola consulta.
+
+        Args:
+            urls (List[str]): Una lista de URLs a verificar.
+
+        Returns:
+            set[str]: Un conjunto de URLs que ya existen en la base de datos.
+        """
+        if not urls:
+            return set()
+
+        try:
+            # Realizar una sola consulta usando el operador 'in'
+            response = self.client.table("articles").select("url").in_("url", urls).execute()
+
+            existing_urls = {item["url"] for item in response.data}
+            logging.info(f"Verificación por lotes: {len(existing_urls)} de {len(urls)} URLs ya existen.")
+            return existing_urls
+        except Exception as e:
+            logging.error(f"Error al verificar URLs por lotes en Supabase: {e}")
+            return set()
+
+    def save_articles_batch(self, articles: List[Article]) -> List[Article]:
+        """
+        Inserta múltiples artículos en Supabase en una sola operación por lotes.
+
+        Args:
+            articles (List[Article]): Una lista de objetos Article a insertar.
+
+        Returns:
+            List[Article]: Una lista de los objetos Article que fueron insertados exitosamente.
+        """
+        if not articles:
+            return []
+
+        articles_data = [article.model_dump(mode='json') for article in articles]
+
+        try:
+            logging.info(f"Intentando insertar {len(articles_data)} artículos por lotes.")
+            insert_response = self.client.table("articles").insert(articles_data).execute()
+
+            if insert_response.data:
+                inserted_urls = {item["url"] for item in insert_response.data}
+                successfully_inserted_articles = [
+                    article for article in articles if str(article.url) in inserted_urls
+                ]
+                logging.info(f"¡ÉXITO! Se insertaron {len(successfully_inserted_articles)} artículos por lotes.")
+                return successfully_inserted_articles
+            else:
+                logging.error(f"La inserción por lotes de artículos falló. Respuesta: {insert_response}")
+                return []
+        except Exception as e:
+            logging.error(f"Error inesperado al guardar artículos por lotes: {e}")
+            return []
 
 # --- Ejemplo de Uso ---
 if __name__ == "__main__":
