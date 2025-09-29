@@ -4,7 +4,7 @@ from typing import List, Dict
 from pydantic import ValidationError
 from publishers.supabase_client import SupabaseClient, Article
 from scrapers.anti_detection import AntiDetectionScraper
-from ai_orchestrator.consensus_engine import AIOrchestrator, OrchestratorConfig, EXAMPLE_CONFIG_DICT
+from ai_orchestrator.consensus_engine import AIOrchestrator, OrchestratorConfig, REAL_CONFIG_DICT
 
 # Configuración básica de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,7 +26,7 @@ async def main_workflow():
         # 1. Inicializar todos nuestros clientes
         scraper = AntiDetectionScraper()
         supabase_client = SupabaseClient()
-        orchestrator_config = OrchestratorConfig(**EXAMPLE_CONFIG_DICT)
+        orchestrator_config = OrchestratorConfig(**REAL_CONFIG_DICT)
         ai_orchestrator = AIOrchestrator(orchestrator_config)
 
         logging.info(f"Se procesarán {len(CONTENT_SOURCES)} fuentes de contenido.")

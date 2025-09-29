@@ -126,6 +126,7 @@ class AIConfig(BaseModel):
     api_key_env: str  # Nombre de la variable de entorno para la clave API
     weight: float = 1.0
     tier: int = Field(..., ge=1, le=3) # Tier 1, 2 o 3
+    model: Optional[str] = None # Añadir campo opcional para el nombre del modelo
 
 class OrchestratorConfig(BaseModel):
     """Modelo Pydantic para la configuración general del orquestador."""
@@ -240,22 +241,65 @@ class AIOrchestrator:
         try:
             # Simulación de llamada a API. En un caso real, aquí iría la lógica específica
             # para cada API (headers, body, endpoint, etc.).
-            # Para este ejemplo, solo simulamos una respuesta.
             logging.info(f"Llamando a '{ai_config.name}' (Tier {ai_config.tier})...")
 
-            # Simular un fallo aleatorio para probar el Circuit Breaker
-            if ai_config.name == "Groq" and time.time() % 5 < 2: # Groq falla 40% de las veces
-                raise httpx.RequestError("Simulated network error for Groq")
-            if ai_config.name == "OpenAI" and time.time() % 7 < 1: # OpenAI falla ~14% de las veces
-                raise httpx.TimeoutException("Simulated timeout for OpenAI")
+            headers = {
+                "Authorization": f"Bearer {self.ai_api_keys[ai_config.name]}",
+                "Content-Type": "application/json",
+            }
+            json_data = {}
+            response_content = None
 
-            await asyncio.sleep(0.5 + (ai_config.tier * 0.2)) # Simular latencia
+            if ai_config.name == "Groq" or ai_config.name == "OpenAI" or ai_config.name == "DeepSeek":
+                if ai_config.name == "DeepSeek":
+                    headers["HTTP-Referer"] = "https://your-app-url.com" # Reemplazar con la URL de tu aplicación
+                    headers["X-Title"] = "Your App Name" # Reemplazar con el nombre de tu aplicación
+                    json_data = {
+                        "model": ai_config.model, # Asumiendo que el modelo está en ai_config para DeepSeek
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7,
+                    }
+                else: # Groq y OpenAI
+                    json_data = {
+                        "model": "llama3-8b-8192" if ai_config.name == "Groq" else "gpt-3.5-turbo",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7,
+                    }
 
-            response_data = {"content": f"Respuesta de {ai_config.name} para: '{prompt}'"}
+                response = await self.client.post(ai_config.url, headers=headers, json=json_data)
+                response.raise_for_status()
+                response_json = response.json()
+                if ai_config.name == "Gemini":
+                    response_content = response_json["candidates"][0]["content"]["parts"][0]["text"]
+                else:
+                    response_content = response_json["choices"][0]["message"]["content"]
 
-            cb.on_success()
-            logging.info(f"'{ai_config.name}' respondió con éxito.")
-            return response_data["content"] # Retornar solo el contenido para el consenso
+            elif ai_config.name == "Gemini":
+                headers.pop("Content-Type") # Gemini usa un formato diferente para la clave API
+                headers["x-goog-api-key"] = self.ai_api_keys[ai_config.name]
+                json_data = {
+                    "contents": [{"parts": [{"text": prompt}]}]
+                }
+                response = await self.client.post(ai_config.url, headers=headers, json=json_data)
+                response.raise_for_status()
+                response_json = response.json()
+                response_content = response_json["candidates"][0]["content"]["parts"][0]["text"]
+
+            elif ai_config.name == "HuggingFace":
+                headers["Authorization"] = f"Bearer {self.ai_api_keys[ai_config.name]}"
+                json_data = {"inputs": prompt}
+                response = await self.client.post(ai_config.url, headers=headers, json=json_data)
+                response.raise_for_status()
+                response_json = response.json()
+                # La respuesta de HuggingFace Inference API puede variar, ajusta según el modelo
+                response_content = response_json[0]["generated_text"] if isinstance(response_json, list) else response_json["generated_text"]
+
+            if response_content:
+                cb.on_success()
+                logging.info(f"'{ai_config.name}' respondió con éxito.")
+                return response_content
+            else:
+                raise ValueError(f"No se pudo extraer contenido de la respuesta de '{ai_config.name}'.")
 
         except httpx.TimeoutException:
             logging.error(f"Timeout al llamar a '{ai_config.name}'.")
@@ -322,14 +366,21 @@ class AIOrchestrator:
         """Retorna el estado actual de todos los Circuit Breakers."""
         return {name: cb.get_status() for name, cb in self.circuit_breakers.items()}
 
-# --- Ejemplo de Configuración SIMPLIFICADO PARA PRUEBAS ---
-EXAMPLE_CONFIG_DICT = {
+REAL_CONFIG_DICT = {
     "ai_services": [
-        {"name": "Groq", "url": "https://api.groq.com/v1/chat/completions", "api_key_env": "GROQ_API_KEY", "weight": 1.0, "tier": 1},
-        {"name": "OpenAI", "url": "https://api.openai.com/v1/chat/completions", "api_key_env": "OPENAI_API_KEY", "weight": 2.0, "tier": 3},
+        # TIER 1: Fast & Free
+        {"name": "Groq", "url": "https://api.groq.com/openai/v1/chat/completions", "api_key_env": "GROQ_API_KEY", "weight": 1.2, "tier": 1},
+        {"name": "DeepSeek", "url": "https://openrouter.ai/api/v1/chat/completions", "api_key_env": "OPENROUTER_API_KEY", "weight": 1.3, "tier": 1, "model": "deepseek/deepseek-chat"},
+
+        # TIER 2: Specialized
+        {"name": "Gemini", "url": "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent", "api_key_env": "GEMINI_API_KEY", "weight": 1.4, "tier": 2},
+        {"name": "HuggingFace", "url": "https://api-inference.huggingface.co/models/microsoft/DialoGPT-large", "api_key_env": "HUGGINGFACE_API_KEY", "weight": 1.1, "tier": 2},
+
+        # TIER 3: Premium
+        {"name": "OpenAI", "url": "https://api.openai.com/v1/chat/completions", "api_key_env": "OPENAI_API_KEY", "weight": 1.5, "tier": 3},
     ],
     "timeout_per_ai": 30,
-    "circuit_breaker_failure_threshold": 2,
+    "circuit_breaker_failure_threshold": 3,
     "circuit_breaker_recovery_timeout": 60,
     "circuit_breaker_reset_timeout": 300
 }
@@ -340,7 +391,7 @@ if __name__ == "__main__":
         logging.info("Iniciando demostración del AIOrchestrator...")
 
         # Crear una instancia del orquestador
-        config = OrchestratorConfig(**EXAMPLE_CONFIG_DICT)
+        config = OrchestratorConfig(**REAL_CONFIG_DICT)
         orchestrator = AIOrchestrator(config)
 
         test_prompt = "¿Cuál es la capital de Francia?"
