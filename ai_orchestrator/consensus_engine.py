@@ -265,8 +265,8 @@ class AIOrchestrator:
                 response_content = response_json["choices"][0]["message"]["content"]
 
             elif ai_config.name == "DeepSeek":
-                headers["HTTP-Referer"] = "https://your-app-url.com" # Reemplazar con la URL de tu aplicación
-                headers["X-Title"] = "Your App Name" # Reemplazar con el nombre de tu aplicación
+                headers["HTTP-Referer"] = "https://axiom-ai-gamma.vercel.app"
+                headers["X-Title"] = "Axiom AI - Multi-Engine Content Platform"
                 json_data = {
                     "model": ai_config.model,
                     "messages": [{"role": "user", "content": prompt}],
